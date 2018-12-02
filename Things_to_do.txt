@@ -1,0 +1,4 @@
+1. How messages are sent and receive from terminal? Potentially write a new task that handles messages in and out.
+2. Web server comms with terminal.
+3. Host takes 1-2 minutes to detect that a slave is failed and no longer connect to the network. Need to be faster.
+4. End devive takes tens seconds to promote to Router. Need to be faster.

@@ -1,0 +1,4 @@
+1. dBM Tx power
+2. Deleted all keyboard handler.
+3. Deleted temp report.
+4. Define all AUTOSTART variables and timer
