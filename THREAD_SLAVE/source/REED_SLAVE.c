@@ -2,6 +2,8 @@
 Include Files
 ==================================================================================================*/
 
+#define SLAVE_ID
+
 #include <string.h>
 #include "EmbeddedTypes.h"
 
@@ -59,7 +61,7 @@ Private macros
 
 #define gAppRestoreLeaderLedTimeout_c           60     /* seconds */
 
-#define gAppJoinTimeout_c                       400//800    /* miliseconds */
+#define gAppJoinTimeout_c                       800    /* miliseconds */
 
 #define APP_LED_URI_PATH                        "/led"
 #define APP_TEXT_URI_PATH						"/text"
@@ -79,19 +81,14 @@ Private global variables declarations
 ==================================================================================================*/
 static instanceId_t mThrInstanceId = gInvalidInstanceId_c;    /*!< Thread Instance ID */
 
-static bool_t mFirstPushButtonPressed = FALSE;
-
-static bool_t mJoiningIsAppInitiated = FALSE;
 
 /*==================================================================================================
 Private prototypes
 ==================================================================================================*/
 static void App_UpdateStateLeds(appDeviceState_t deviceState);
-static void APP_JoinEventsHandler(thrEvCode_t evCode);
 static void APP_InitCoapDemo(void);
 #if gKBD_KeysCount_c > 1
 static void APP_SendLedRgbOn(void *pParam);
-static void APP_SendLedRgbOff(void *pParam);
 static void APP_SendLedFlash(void *pParam);
 static void APP_SendLedColorWheel(void *pParam);
 static void APP_SendIPv6Addr(void *pParam);
@@ -99,12 +96,10 @@ static void APP_AutoStart(void *pParam);
 
 #endif
 static void APP_ProcessLedCmd(uint8_t *pCommand, uint8_t dataLen);
-static void APP_CoapGenericCallback(coapSessionStatus_t sessionStatus, void *pData, coapSession_t *pSession, uint32_t dataLen);
 static void APP_CoapLedCb(coapSessionStatus_t sessionStatus, void *pData, coapSession_t *pSession, uint32_t dataLen);
 static void APP_CoapTextCb(coapSessionStatus_t sessionStatus, void *pData, coapSession_t *pSession, uint32_t dataLen);
 static void APP_CoapAddrCb(coapSessionStatus_t sessionStatus, void *pData, coapSession_t *pSession, uint32_t dataLen);
 
-static void App_RestoreLeaderLed(void *param);
 #if LARGE_NETWORK
 static void APP_CoapResetToFactoryDefaultsCb(coapSessionStatus_t sessionStatus, void *pData, coapSession_t *pSession, uint32_t dataLen);
 static void APP_SendResetToFactoryCommand(void *param);
@@ -170,7 +165,6 @@ void App_Init(void)
 
     /* Set default device mode/state */
     APP_SetState(gThrDefaultInstanceId_c, gDeviceState_FactoryDefault_c);
-    APP_SetMode(gThrDefaultInstanceId_c, gDeviceMode_Configuration_c);
 
     /* Initialize keyboard handler */
     //pfAppKeyboardHandler = App_HandleKeyboard;
@@ -234,19 +228,12 @@ static void APP_AutoStart
     void *param
 )
 {
-	shell_printf("ENTER AUTOSTART\n");
     if(!THR_GetAttr_IsDevConnected(mThrInstanceId))
     {
         if(THR_NwkJoin(mThrInstanceId, THR_APP_JOIN_DISCOVERY_METHOD) != gThrStatus_Success_c)
         {
             // User can treat join failure according to their application
         }
-        /*
-        if(THR_NwkAttach(mThrInstanceId) != gThrStatus_Success_c)
-        {
-            // User can treat join failure according to their application
-        }
-        */
 
     }
 }
@@ -295,28 +282,18 @@ void Stack_to_APP_Handler
     switch(pEventParams->code)
     {
         case gThrEv_GeneralInd_ResetToFactoryDefault_c:
-            App_UpdateStateLeds(gDeviceState_FactoryDefault_c);
-        	shell_printf("gThrEv_GeneralInd_ResetToFactoryDefault_c\n");
-
             break;
 
         case gThrEv_GeneralInd_InstanceRestoreStarted_c:
-        	shell_printf("gThrEv_GeneralInd_InstanceRestoreStarted_c\n");
-            APP_SetState(gThrDefaultInstanceId_c, gDeviceState_NwkFailure_c);
+            //APP_SetState(gThrDefaultInstanceId_c, gDeviceState_NwkFailure_c);
             THR_FactoryReset();
         	break;
         case gThrEv_GeneralInd_ConnectingStarted_c:
-        	shell_printf("gThrEv_GeneralInd_ConnectingStarted_c\n");
-
-            APP_SetMode(mThrInstanceId, gDeviceMode_Configuration_c);
-            App_UpdateStateLeds(gDeviceState_JoiningOrAttaching_c);
-            gEnable802154TxLed = FALSE;
             break;
 
         case gThrEv_NwkJoinCnf_Success_c:
         	break;
         case gThrEv_NwkJoinCnf_Failed_c:
-            //APP_JoinEventsHandler(pEventParams->code);
         	APP_AutoStart(NULL);
             break;
 
@@ -325,38 +302,24 @@ void Stack_to_APP_Handler
             /* Set application CoAP destination to all nodes on connected network */
             gCoapDestAddress = APP_DEFAULT_DEST_ADDR;
             APP_SetMode(mThrInstanceId, gDeviceMode_Application_c);
-            mFirstPushButtonPressed  = FALSE;
             /* Synchronize server data */
             THR_BrPrefixAttrSync(mThrInstanceId);
             /* Enable LED for 802.15.4 tx activity */
-            gEnable802154TxLed = TRUE;
-
+            //gEnable802154TxLed = TRUE;
             //APP_SendIPv6Addr(NULL);
-            //(void)NWKU_SendMsg(APP_SendIPv6Addr, NULL, mpAppThreadMsgQueue);
             break;
 
         case gThrEv_GeneralInd_RequestRouterId_c:
-            gEnable802154TxLed = FALSE;
             break;
 
         case gThrEv_GeneralInd_ConnectingDeffered_c:
-            APP_SetMode(mThrInstanceId, gDeviceMode_Configuration_c);
-            gEnable802154TxLed = FALSE;
-            App_UpdateStateLeds(gDeviceState_NwkOperationPending_c);
             break;
 
         case gThrEv_GeneralInd_ConnectingFailed_c:
         case gThrEv_GeneralInd_Disconnected_c:
-
-            APP_SetMode(mThrInstanceId, gDeviceMode_Configuration_c);
-            App_UpdateStateLeds(gDeviceState_NwkFailure_c);
-        	shell_printf("SHIT YOU FAILED\n");
-
             break;
 
         case gThrEv_GeneralInd_DeviceIsLeader_c:
-            App_UpdateStateLeds(gDeviceState_Leader_c);
-            gEnable802154TxLed = TRUE;
             THR_FactoryReset();
 #if !LARGE_NETWORK
             /* Auto start commissioner for the partition for demo purposes */
@@ -366,7 +329,7 @@ void Stack_to_APP_Handler
 
         case gThrEv_GeneralInd_DeviceIsRouter_c:
             App_UpdateStateLeds(gDeviceState_ActiveRouter_c);
-            gEnable802154TxLed = TRUE;
+            //gEnable802154TxLed = TRUE;
 
 #if UDP_ECHO_PROTOCOL
             ECHO_ProtocolInit(mpAppThreadMsgQueue);
@@ -374,19 +337,8 @@ void Stack_to_APP_Handler
             break;
 
         case gThrEv_GeneralInd_DevIsREED_c:
-            App_UpdateStateLeds(gDeviceState_NwkConnected_c);
-            gEnable802154TxLed = TRUE;
             break;
 
-#if gLpmIncluded_d
-        case gThrEv_GeneralInd_AllowDeviceToSleep_c:
-            PWR_AllowDeviceToSleep();
-            break;
-
-        case gThrEv_GeneralInd_DisallowDeviceToSleep_c:
-            PWR_DisallowDeviceToSleep();
-            break;
-#endif
         default:
             break;
     }
@@ -406,11 +358,12 @@ void APP_Commissioning_Handler
     void *param
 )
 {
+
     thrEvmParams_t *pEventParams = (thrEvmParams_t *)param;
 
     switch(pEventParams->code)
     {
-        /* Joiner Events */
+        // Joiner Events
         case gThrEv_MeshCop_JoinerDiscoveryStarted_c:
             break;
         case gThrEv_MeshCop_JoinerDiscoveryFailed_c:
@@ -420,16 +373,18 @@ void APP_Commissioning_Handler
         case gThrEv_MeshCop_JoinerDiscoverySuccess_c:
             break;
         case gThrEv_MeshCop_JoinerDtlsSessionStarted_c:
-            App_UpdateStateLeds(gDeviceState_JoiningOrAttaching_c);
+            //App_UpdateStateLeds(gDeviceState_JoiningOrAttaching_c);
+            App_UpdateStateLeds(gDeviceState_FactoryDefault_c);
+
             break;
         case gThrEv_MeshCop_JoinerDtlsError_c:
         case gThrEv_MeshCop_JoinerError_c:
-            App_UpdateStateLeds(gDeviceState_FactoryDefault_c);
+            //App_UpdateStateLeds(gDeviceState_FactoryDefault_c);
             break;
         case gThrEv_MeshCop_JoinerAccepted_c:
             break;
 
-        /* Commissioner Events(event set applies for all Commissioners: on-mesh, external, native) */
+        // Commissioner Events(event set applies for all Commissioners: on-mesh, external, native)
         case gThrEv_MeshCop_CommissionerPetitionStarted_c:
             break;
         case gThrEv_MeshCop_CommissionerPetitionAccepted_c:
@@ -459,23 +414,11 @@ void APP_Commissioning_Handler
             break;
     }
 
-    /* Free event buffer */
+    // Free event buffer
     MEM_BufferFree(pEventParams);
+
 }
 
-/*!*************************************************************************************************
-\fn     void App_RestoreLeaderLedCb(void *param)
-\brief  Called in Application state to restore leader LED.
-
-\param  [in]    param    Not used
-***************************************************************************************************/
-void App_RestoreLeaderLedCb
-(
-    void *param
-)
-{
-    (void)NWKU_SendMsg(App_RestoreLeaderLed, NULL, mpAppThreadMsgQueue);
-}
 
 /*==================================================================================================
 Private functions
@@ -526,44 +469,6 @@ static void App_UpdateStateLeds
     Led_SetState(APP_GetMode(mThrInstanceId), APP_GetState(mThrInstanceId));
 }
 
-/*==================================================================================================
-  Coap Demo functions:
-==================================================================================================*/
-/*!*************************************************************************************************
-\private
-\fn     static void APP_CoapGenericCallback(sessionStatus sessionStatus, void *pData,
-                                            coapSession_t *pSession, uint32_t dataLen)
-\brief  This function is the generic callback function for CoAP message.
-
-\param  [in]    sessionStatus   Status for CoAP session
-\param  [in]    pData           Pointer to CoAP message payload
-\param  [in]    pSession        Pointer to CoAP session
-\param  [in]    dataLen         Length of CoAP payload
-***************************************************************************************************/
-static void APP_CoapGenericCallback
-(
-    coapSessionStatus_t sessionStatus,
-    void *pData,
-    coapSession_t *pSession,
-    uint32_t dataLen
-)
-{
-	shell_write("Hey what's up I'm in this shit \n\r");
-
-    /* If no ACK was received, try again */
-    if(sessionStatus == gCoapFailure_c)
-    {
-
-    	/*
-        if(FLib_MemCmp(pSession->pUriPath->pUriPath, (coapUriPath_t *)&gAPP_LED_URI_PATH.pUriPath,
-                       pSession->pUriPath->length))
-        {
-            //(void)NWKU_SendMsg(APP_ProcessLedCmd(pCommand, dataLen), NULL, mpAppThreadMsgQueue);
-        }
-        */
-    }
-}
-
 /*!*************************************************************************************************
 \private
 \fn     static void APP_SendLedCommand(uint8_t *pCommand, uint8_t dataLen)
@@ -595,7 +500,7 @@ static void APP_SendLedCommand
             COAP_SetUriPath(pSession,(coapUriPath_t *)&gAPP_LED_URI_PATH);
 
 			coapMessageType = gCoapMsgTypeConPost_c;
-			pSession->pCallback = APP_CoapGenericCallback;
+			pSession->pCallback = NULL;
 
             COAP_Send(pSession, coapMessageType, pCommand, dataLen);
         }
@@ -629,20 +534,9 @@ static void APP_SendIPv6Addr
         {
             coapMsgTypesAndCodes_t coapMessageType = gCoapMsgTypeNonPost_c;
 
-            pSession->pCallback = APP_CoapGenericCallback;
+            pSession->pCallback = NULL;
             FLib_MemCpy(&pSession->remoteAddr, (ipAddr_t *)pParam, sizeof(ipAddr_t));
             COAP_SetUriPath(pSession,(coapUriPath_t *)&gAPP_ADDR_URI_PATH);
-            /*
-            if(!IP6_IsMulticastAddr(&gCoapDestAddress))
-            {
-                coapMessageType = gCoapMsgTypeConPost_c;
-                pSession->pCallback = APP_CoapGenericCallback;
-            }
-            else
-            {
-                //APP_ProcessLedCmd(pCommand, dataLen);
-            }
-            */
             COAP_Send(pSession, coapMessageType, NULL, 0);
         }
     }
@@ -680,25 +574,6 @@ static void APP_SendLedRgbOn
     NWKU_PrintDec(redValue, aCommand + 5, 3, TRUE);     //aCommand + strlen("rgb r")
     NWKU_PrintDec(greenValue, aCommand + 10, 3, TRUE);  //aCommand + strlen("rgb r000 g")
     NWKU_PrintDec(blueValue, aCommand + 15, 3, TRUE);   //aCommand + strlen("rgb r000 g000 b")
-
-    APP_SendLedCommand(aCommand, sizeof(aCommand));
-}
-
-
-
-/*!*************************************************************************************************
-\private
-\fn     static void APP_SendLedRgbOff(void *pParam)
-\brief  This function is used to send a Led RGB Off command over the air.
-
-\param  [in]    pParam    Not used
-***************************************************************************************************/
-static void APP_SendLedRgbOff
-(
-    void *pParam
-)
-{
-    uint8_t aCommand[] = {"rgb r000 g000 b000"};
 
     APP_SendLedCommand(aCommand, sizeof(aCommand));
 }
@@ -871,7 +746,6 @@ static void APP_ProcessLedCmd
 
     /* Set mode state */
     APP_SetMode(mThrInstanceId, gDeviceMode_Application_c);
-    mFirstPushButtonPressed  = FALSE;
 
     /* Process command */
     if(FLib_MemCmp(pCommand, "on",2))
@@ -952,19 +826,3 @@ static void APP_ProcessLedCmd
 #endif
     }
 }
-
-/*!*************************************************************************************************
-\private
-\fn     static void App_RestoreLeaderLed(void *param)
-\brief  Called in Application state to restore leader LED.
-
-\param  [in]    param    Not used
-***************************************************************************************************/
-static void App_RestoreLeaderLed
-(
-    void *param
-)
-{
-    App_UpdateStateLeds(gDeviceState_Leader_c);
-}
-
