@@ -1040,7 +1040,8 @@ int main (void)
 }
 
 /*! *********************************************************************************
-* \brief     Allocates a osObjectStruct_t block in the osObjectHeap array.
+* \brief     Allocates a osObjeca
+* tStruct_t block in the osObjectHeap array.
 * \param[in] pointer to the object info struct.
 * Object can be semaphore, mutex, message Queue, event
 * \return Pointer to the allocated osObjectStruct_t, NULL if failed.

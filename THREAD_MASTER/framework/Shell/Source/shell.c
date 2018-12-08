@@ -571,33 +571,14 @@ cmd_tbl_t * shell_find_command (char * cmd)
         }
     }
 
-    if (!strcmp((char*)cmd, "a"))
+    if (!strcmp((char*)cmd, "G0"))
     {
-    	shell_write("BLEUBLEU\n\r");
     	APP_GetActiveSlaves(NULL);
-    	//APP_SendLedRgbOn(0);
     }
     else
     {
     	APP_SerialCommand(cmd);
     }
-    /*
-    else if (!strcmp((char*)cmd, "yenmap"))
-    {
-    	APP_SendLedRgbOn(0);
-    }
-    else if (!strcmp((char*)cmd, "yen"))
-    {
-    	shell_write("BLOBLO\n\r");
-    	APP_SendLedRgbOn(1);
-    }
-    else if (!strcmp((char*)cmd, "yenmobu"))
-    {
-    	shell_write("BLABLA\n\r");
-    	APP_SendLedRgbOn(2);
-    }
-    */
-
     return NULL;
 }
 
@@ -706,6 +687,7 @@ static void shell_main( void *params )
             }
             else
             {
+            	/*
                 shell_write("Unknown command '");
                 shell_write(argv[0]);
 #if SHELL_USE_HELP
@@ -713,6 +695,7 @@ static void shell_main( void *params )
 #else
                 shell_write("' ");
 #endif
+				*/
             }
 #if SHELL_USE_HELP
             if( ret == CMD_RET_USAGE )
