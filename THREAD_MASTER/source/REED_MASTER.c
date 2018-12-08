@@ -16,7 +16,7 @@ Include Files
 
 /* Application */
 #include "router_eligible_device_app.h"
-//#include "shell_ip.h"
+#include "shell_ip.h"
 #include "thread_utils.h"
 #include "thread_meshcop.h"
 #include "thread_network.h"
@@ -33,6 +33,7 @@ Include Files
 #if THR_ENABLE_MGMT_DIAGNOSTICS
 #include "thread_mgmt.h"
 #include "thci.h"
+#include "fsl_debug_console.h"
 #endif
 
 #define APP_DEFAULT_DEST_ADDR                   in6addr_realmlocal_allthreadnodes
@@ -76,14 +77,13 @@ Private global variables declarations
 static instanceId_t mThrInstanceId = gInvalidInstanceId_c;    /*!< Thread Instance ID */
 
 
-#define SLAVE_NUM_MAX 3
+#define SLAVE_NUM_MAX 6
 uint8_t slave_count = 0;
 static ipAddr_t slaveIP[SLAVE_NUM_MAX] = {0};
 /*==================================================================================================
 Private prototypes
 ==================================================================================================*/
 static void App_UpdateStateLeds(appDeviceState_t deviceState);
-static void APP_JoinEventsHandler(thrEvCode_t evCode);
 static void APP_InitCoapDemo(void);
 #if gKBD_KeysCount_c > 1
 static void APP_SendLedRgbOn(uint8_t pParam);
@@ -350,6 +350,7 @@ void Stack_to_APP_Handler
 \brief  This function is used to handle Commissioning events in synchronous mode.
 \param  [in]    param    Pointer to Commissioning event
 ***************************************************************************************************/
+
 void APP_Commissioning_Handler
 (
     void *param
@@ -359,7 +360,7 @@ void APP_Commissioning_Handler
 
     switch(pEventParams->code)
     {
-        /* Joiner Events */
+        // Joiner Events
         case gThrEv_MeshCop_JoinerDiscoveryStarted_c:
             break;
         case gThrEv_MeshCop_JoinerDiscoveryFailed_c:
@@ -378,7 +379,7 @@ void APP_Commissioning_Handler
         case gThrEv_MeshCop_JoinerAccepted_c:
             break;
 
-        /* Commissioner Events(event set applies for all Commissioners: on-mesh, external, native) */
+        // Commissioner Events(event set applies for all Commissioners: on-mesh, external, native)
         case gThrEv_MeshCop_CommissionerPetitionStarted_c:
             break;
         case gThrEv_MeshCop_CommissionerPetitionAccepted_c:
@@ -408,7 +409,7 @@ void APP_Commissioning_Handler
             break;
     }
 
-    /* Free event buffer */
+    // Free event buffer
     MEM_BufferFree(pEventParams);
 }
 
@@ -507,7 +508,7 @@ void APP_CoapACKcb
     uint32_t dataLen
 )
 {
-	shell_printf("Hey what's up I'm in this shit \n");
+	//shell_printf("Hey what's up I'm in this shit \n");
 	ACK_status = TRUE;
 	/*
     // If no ACK was received, try again
@@ -530,16 +531,20 @@ void APP_ACKTimerCb (void *pParam)
 
 	if (ACK_status == TRUE)
 	{
-		//shell_printf("ACK received\r\n");
+		//PRINTF("Success!\r\n");
+		shell_write("S");
+
+
 	}
 	else
 	{
-		shell_write("ACK failed\r\n");
+		//PRINTF("Failed!\r\n");
+		shell_write("F");
 		COAP_CloseSession((coapSession_t*)pParam);
 		//APP_GetActiveSlaves(NULL);
 
 	}
-	shell_refresh();
+	//shell_refresh();
 }
 
 /*!*************************************************************************************************
@@ -582,9 +587,9 @@ static void APP_SendLedCommand
 	        }
 	        if(mACKTimerId != gTmrInvalidTimerID_c)
 	        {
-	           if(gTmrSuccess_c != TMR_StartSingleShotTimer(mACKTimerId, 3000, APP_ACKTimerCb, (void*)pSession))
+	           if(gTmrSuccess_c != TMR_StartSingleShotTimer(mACKTimerId, 1500, APP_ACKTimerCb, (void*)pSession))
 	           {
-	        	   shell_write("FAILED CMNR\r\n");
+	        	   //shell_write("FAILED CMNR\r\n");
 	           }
 	        }
         }
@@ -603,6 +608,17 @@ static void APP_SendLedCommand
 \param  [in]    pCommand   Pointer to command data
 \param  [in]    dataLen    Data length
 ***************************************************************************************************/
+static void APP_ReportSlavesNum
+(
+		coapSessionStatus_t sessionStatus,
+	    void *pData,
+	    coapSession_t *pSession,
+	    uint32_t dataLen
+)
+{
+	shell_printf("%d\n", slave_count);
+}
+
 void APP_GetActiveSlaves
 (
 	void *pParam
@@ -625,6 +641,7 @@ void APP_GetActiveSlaves
         }
     }
 }
+
 
 void APP_SerialCommand(char * command)
 {
@@ -656,43 +673,39 @@ void APP_SendLedRgbOn
     uint8_t slaveNum
 )
 {
+	static uint8_t i = 0;
     uint8_t aCommand[] = {"rgb r000 g000 b000"};
     uint8_t redValue, greenValue, blueValue;
-
-    /* Red value on: 0x01 - 0xFF */
-    redValue = (uint8_t)NWKU_GetRandomNoFromInterval(0x01, THR_ALL_FFs8);
-
-    /* Green value on: 0x01 - 0xFF */
-    greenValue = (uint8_t)NWKU_GetRandomNoFromInterval(0x01, THR_ALL_FFs8);
-
-    /* Blue value on: 0x01 - 0xFF */
-    blueValue = (uint8_t)NWKU_GetRandomNoFromInterval(0x01, THR_ALL_FFs8);
-
+    switch (i) {
+		case 0:
+	        redValue = 150;
+	        greenValue = 150;
+	        blueValue = 0;
+			break;
+		case 1:
+	        redValue = 0;
+	        greenValue = 150;
+	        blueValue = 150;
+			break;
+		case 2:
+	        redValue = 150;
+	        greenValue = 0;
+	        blueValue = 150;
+			break;
+		default:
+			break;
+	}
+    i++;
+    if (i == 3)
+    {i = 0;}
     NWKU_PrintDec(redValue, aCommand + 5, 3, TRUE);     //aCommand + strlen("rgb r")
     NWKU_PrintDec(greenValue, aCommand + 10, 3, TRUE);  //aCommand + strlen("rgb r000 g")
     NWKU_PrintDec(blueValue, aCommand + 15, 3, TRUE);   //aCommand + strlen("rgb r000 g000 b")
-
     APP_SendLedCommand(aCommand, sizeof(aCommand), slaveNum);
 }
 
 
 
-/*!*************************************************************************************************
-\private
-\fn     static void APP_SendLedRgbOff(void *pParam)
-\brief  This function is used to send a Led RGB Off command over the air.
-
-\param  [in]    pParam    Not used
-***************************************************************************************************/
-static void APP_SendLedRgbOff
-(
-    uint8_t pParam
-)
-{
-    uint8_t aCommand[] = {"rgb r000 g000 b000"};
-
-    APP_SendLedCommand(aCommand, sizeof(aCommand), 0);
-}
 
 /*!*************************************************************************************************
 \private
@@ -780,10 +793,13 @@ static void APP_CoapTextCb
         myText[dataLen] = '\0';
         FLib_MemCpy(myText,pData,dataLen);
         ntop(AF_INET6, &pSession->remoteAddr, addrStr, INET6_ADDRSTRLEN);
+
+#ifdef SHELL_DEBUG
         shell_write("\r");
         shell_printf(myText);
         shell_printf("\tFrom IPv6 Address: %s\n\r", addrStr);
         shell_refresh();
+#endif
     }
 
     /* Send the reply if the status is Success or Duplicate */
@@ -805,19 +821,21 @@ static void APP_CoapAddrCb
     uint32_t dataLen
 )
 {
-
-
     /* Process the command if the sessionStatus is "success" */
     if(sessionStatus == gCoapSuccess_c)
     {
         char addrStr[INET6_ADDRSTRLEN];
         ntop(AF_INET6, &pSession->remoteAddr, addrStr, INET6_ADDRSTRLEN);
         slaveIP[slave_count++] = pSession->remoteAddr;
+        shell_printf("%d", slave_count);
+        // In serial just read 3 characters
+#ifdef SHELL_DEBUG
         shell_write("\r");
         shell_printf("1 new device connected! ");
         shell_printf("\tFrom IPv6 Address: %s\n\r", addrStr);
         shell_printf("Slave count = %d\n\r", slave_count);
         shell_refresh();
+#endif
     }
 
     /* Send the reply if the status is Success or Duplicate */
