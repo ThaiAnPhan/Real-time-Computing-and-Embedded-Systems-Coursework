@@ -16,7 +16,7 @@ Include Files
 
 /* Application */
 #include "router_eligible_device_app.h"
-//#include "shell_ip.h"
+#include "shell_ip.h"
 #include "thread_utils.h"
 #include "thread_meshcop.h"
 #include "thread_network.h"
@@ -33,6 +33,7 @@ Include Files
 #if THR_ENABLE_MGMT_DIAGNOSTICS
 #include "thread_mgmt.h"
 #include "thci.h"
+#include "fsl_debug_console.h"
 #endif
 
 #define APP_DEFAULT_DEST_ADDR                   in6addr_realmlocal_allthreadnodes
@@ -76,21 +77,20 @@ Private global variables declarations
 static instanceId_t mThrInstanceId = gInvalidInstanceId_c;    /*!< Thread Instance ID */
 
 
-#define SLAVE_NUM_MAX 3
+#define SLAVE_NUM_MAX 6
 uint8_t slave_count = 0;
 static ipAddr_t slaveIP[SLAVE_NUM_MAX] = {0};
 /*==================================================================================================
 Private prototypes
 ==================================================================================================*/
 static void App_UpdateStateLeds(appDeviceState_t deviceState);
-static void APP_JoinEventsHandler(thrEvCode_t evCode);
 static void APP_InitCoapDemo(void);
 #if gKBD_KeysCount_c > 1
-//static void APP_SendLedRgbOn(void *pParam);
-static void APP_SendLedRgbOff(void *pParam);
-static void APP_SendLedFlash(void *pParam);
-static void APP_SendLedColorWheel(void *pParam);
-static void APP_SendIPv6Addr(void *pParam);
+static void APP_SendLedRgbOn(uint8_t pParam);
+static void APP_SendLedRgbOff(uint8_t pParam);
+static void APP_SendLedFlash(uint8_t pParam);
+static void APP_SendLedColorWheel(uint8_t pParam);
+//static void APP_SendIPv6Addr(void *pParam);
 static void APP_CreateNetwork(void *pParam);
 
 #endif
@@ -99,6 +99,8 @@ static void APP_CoapACKcb(coapSessionStatus_t sessionStatus, void *pData, coapSe
 static void APP_CoapLedCb(coapSessionStatus_t sessionStatus, void *pData, coapSession_t *pSession, uint32_t dataLen);
 static void APP_CoapTextCb(coapSessionStatus_t sessionStatus, void *pData, coapSession_t *pSession, uint32_t dataLen);
 static void APP_CoapAddrCb(coapSessionStatus_t sessionStatus, void *pData, coapSession_t *pSession, uint32_t dataLen);
+static void APP_CoapACKcb(coapSessionStatus_t sessionStatus, void *pData, coapSession_t *pSession, uint32_t dataLen);
+static void APP_ACKTimerCb(void *pParam);
 
 static void App_RestoreLeaderLed(void *param);
 #if LARGE_NETWORK
@@ -135,8 +137,7 @@ coapInstance_t mCoapInst;
 /* Destination address for CoAP commands */
 ipAddr_t gCoapDestAddress;
 
-/* Application timer Id */
-tmrTimerID_t mAppTimerId = gTmrInvalidTimerID_c;
+/* ACK timer Id */
 tmrTimerID_t mACKTimerId = gTmrInvalidTimerID_c;
 
 #if APP_AUTOSTART
@@ -149,6 +150,8 @@ uint32_t leaderLedTimestamp = 0;
 taskMsgQueue_t *mpAppThreadMsgQueue = NULL;
 
 extern bool_t gEnable802154TxLed;
+
+bool_t ACK_status = FALSE;
 
 /*==================================================================================================
 Public functions
@@ -190,16 +193,9 @@ void App_Init(void)
 
 void APP_CreateNetwork(void *pParam)
 {
-    if(mAppTimerId != gTmrInvalidTimerID_c)
-    {
-        TMR_FreeTimer(mAppTimerId);
-        mAppTimerId = gTmrInvalidTimerID_c;
-    }
-
     App_UpdateStateLeds(gDeviceState_Leader_c);
     /* Create the network */
     (void)THR_NwkCreate(mThrInstanceId);
-
 }
 
 /*!*************************************************************************************************
@@ -289,7 +285,7 @@ void Stack_to_APP_Handler
             /* Enable LED for 802.15.4 tx activity */
             gEnable802154TxLed = TRUE;
             //APP_SendIPv6Addr(NULL);
-            (void)NWKU_SendMsg(APP_SendIPv6Addr, NULL, mpAppThreadMsgQueue);
+            //(void)NWKU_SendMsg(APP_SendIPv6Addr, NULL, mpAppThreadMsgQueue);
             break;
 
         case gThrEv_GeneralInd_RequestRouterId_c:
@@ -354,6 +350,7 @@ void Stack_to_APP_Handler
 \brief  This function is used to handle Commissioning events in synchronous mode.
 \param  [in]    param    Pointer to Commissioning event
 ***************************************************************************************************/
+
 void APP_Commissioning_Handler
 (
     void *param
@@ -363,7 +360,7 @@ void APP_Commissioning_Handler
 
     switch(pEventParams->code)
     {
-        /* Joiner Events */
+        // Joiner Events
         case gThrEv_MeshCop_JoinerDiscoveryStarted_c:
             break;
         case gThrEv_MeshCop_JoinerDiscoveryFailed_c:
@@ -382,7 +379,7 @@ void APP_Commissioning_Handler
         case gThrEv_MeshCop_JoinerAccepted_c:
             break;
 
-        /* Commissioner Events(event set applies for all Commissioners: on-mesh, external, native) */
+        // Commissioner Events(event set applies for all Commissioners: on-mesh, external, native)
         case gThrEv_MeshCop_CommissionerPetitionStarted_c:
             break;
         case gThrEv_MeshCop_CommissionerPetitionAccepted_c:
@@ -412,7 +409,7 @@ void APP_Commissioning_Handler
             break;
     }
 
-    /* Free event buffer */
+    // Free event buffer
     MEM_BufferFree(pEventParams);
 }
 
@@ -450,12 +447,13 @@ static void APP_InitCoapDemo
     coapStartUnsecParams_t coapParams = {COAP_DEFAULT_PORT, AF_INET6};
     mAppCoapInstId = COAP_CreateInstance(NULL, &coapParams, gIpIfSlp0_c, (coapRegCbParams_t *)cbParams,
                                          NumberOfElements(cbParams));
+    /*
     mCoapInst.ipIfId = gIpIfSlp0_c;
     mCoapInst.port = COAP_DEFAULT_PORT;
     mCoapInst.coapMaxRetransmit = 5;
     mCoapInst.coapAckTimeoutMs = 20;
 
-    /*
+
     coapStartSecParams_t coapParams;
     coapParams.maxRetransmitCnt = 3;
 
@@ -502,7 +500,7 @@ static void App_UpdateStateLeds
 \param  [in]    pSession        Pointer to CoAP session
 \param  [in]    dataLen         Length of CoAP payload
 ***************************************************************************************************/
-static void APP_CoapACKcb
+void APP_CoapACKcb
 (
     coapSessionStatus_t sessionStatus,
     void *pData,
@@ -510,20 +508,43 @@ static void APP_CoapACKcb
     uint32_t dataLen
 )
 {
-	shell_printf("Hey what's up I'm in this shit \n");
-
-    /* If no ACK was received, try again */
+	//shell_printf("Hey what's up I'm in this shit \n");
+	ACK_status = TRUE;
+	/*
+    // If no ACK was received, try again
     if(sessionStatus == gCoapFailure_c)
     {
-
-    	/*
         if(FLib_MemCmp(pSession->pUriPath->pUriPath, (coapUriPath_t *)&gAPP_LED_URI_PATH.pUriPath,
                        pSession->pUriPath->length))
         {
             //(void)NWKU_SendMsg(APP_ProcessLedCmd(pCommand, dataLen), NULL, mpAppThreadMsgQueue);
         }
-        */
     }
+    */
+
+}
+
+void APP_ACKTimerCb (void *pParam)
+{
+    TMR_FreeTimer(mACKTimerId);
+    mACKTimerId = gTmrInvalidTimerID_c;
+
+	if (ACK_status == TRUE)
+	{
+		//PRINTF("Success!\r\n");
+		shell_write("S");
+
+
+	}
+	else
+	{
+		//PRINTF("Failed!\r\n");
+		shell_write("F");
+		COAP_CloseSession((coapSession_t*)pParam);
+		//APP_GetActiveSlaves(NULL);
+
+	}
+	//shell_refresh();
 }
 
 /*!*************************************************************************************************
@@ -558,9 +579,19 @@ static void APP_SendLedCommand
 
 			coapMessageType = gCoapMsgTypeConPost_c;
 			pSession->pCallback = APP_CoapACKcb;
-
-			//COAP_SendMsg(pSession, pCommand, dataLen);
+			ACK_status = FALSE;
             COAP_Send(pSession, coapMessageType, pCommand, dataLen);
+	        if(mACKTimerId == gTmrInvalidTimerID_c)
+	        {
+	        	mACKTimerId = TMR_AllocateTimer();
+	        }
+	        if(mACKTimerId != gTmrInvalidTimerID_c)
+	        {
+	           if(gTmrSuccess_c != TMR_StartSingleShotTimer(mACKTimerId, 1500, APP_ACKTimerCb, (void*)pSession))
+	           {
+	        	   //shell_write("FAILED CMNR\r\n");
+	           }
+	        }
         }
     }
     else
@@ -571,13 +602,24 @@ static void APP_SendLedCommand
 
 /*!*************************************************************************************************
 \private
-\fn     static void APP_SendLedCommand(uint8_t *pCommand, uint8_t dataLen)
+\fn     static void APP_GetActiveSlaves(uint8_t *pCommand, uint8_t dataLen)
 \brief  This function is used to send a Led command to gCoapDestAddress.
 
 \param  [in]    pCommand   Pointer to command data
 \param  [in]    dataLen    Data length
 ***************************************************************************************************/
-static void APP_SendIPv6Addr
+static void APP_ReportSlavesNum
+(
+		coapSessionStatus_t sessionStatus,
+	    void *pData,
+	    coapSession_t *pSession,
+	    uint32_t dataLen
+)
+{
+	shell_printf("%d\n", slave_count);
+}
+
+void APP_GetActiveSlaves
 (
 	void *pParam
 )
@@ -590,30 +632,32 @@ static void APP_SendIPv6Addr
 
         if(pSession)
         {
+        	slave_count = 0;
             coapMsgTypesAndCodes_t coapMessageType = gCoapMsgTypeNonPost_c;
-
-            pSession->pCallback = APP_CoapACKcb;
+            pSession->pCallback = NULL;
             FLib_MemCpy(&pSession->remoteAddr, &gCoapDestAddress, sizeof(ipAddr_t));
             COAP_SetUriPath(pSession,(coapUriPath_t *)&gAPP_ADDR_URI_PATH);
-            /*
-            if(!IP6_IsMulticastAddr(&gCoapDestAddress))
-            {
-                coapMessageType = gCoapMsgTypeConPost_c;
-                pSession->pCallback = APP_CoapACKcb;
-            }
-            else
-            {
-                //APP_ProcessLedCmd(pCommand, dataLen);
-            }
-            */
             COAP_Send(pSession, coapMessageType, NULL, 0);
-            shell_printf("SENDADDR");
         }
     }
-    else
-    {
-        //APP_ProcessLedCmd(pCommand, dataLen);
-    }
+}
+
+
+void APP_SerialCommand(char * command)
+{
+	uint8_t slave_num = 0;
+	switch(command[0])
+	{
+		case '0': slave_num = 0; break;
+		case '1': slave_num = 1; break;
+		case '2': slave_num = 2; break;
+	}
+	switch(command[1])
+	{
+	case 'x': APP_SendLedRgbOn(slave_num); break;
+	case 'y': APP_SendLedFlash(slave_num); break;
+	case 'z': APP_SendLedColorWheel(slave_num); break;
+	}
 }
 
 
@@ -629,43 +673,39 @@ void APP_SendLedRgbOn
     uint8_t slaveNum
 )
 {
+	static uint8_t i = 0;
     uint8_t aCommand[] = {"rgb r000 g000 b000"};
     uint8_t redValue, greenValue, blueValue;
-
-    /* Red value on: 0x01 - 0xFF */
-    redValue = (uint8_t)NWKU_GetRandomNoFromInterval(0x01, THR_ALL_FFs8);
-
-    /* Green value on: 0x01 - 0xFF */
-    greenValue = (uint8_t)NWKU_GetRandomNoFromInterval(0x01, THR_ALL_FFs8);
-
-    /* Blue value on: 0x01 - 0xFF */
-    blueValue = (uint8_t)NWKU_GetRandomNoFromInterval(0x01, THR_ALL_FFs8);
-
+    switch (i) {
+		case 0:
+	        redValue = 150;
+	        greenValue = 150;
+	        blueValue = 0;
+			break;
+		case 1:
+	        redValue = 0;
+	        greenValue = 150;
+	        blueValue = 150;
+			break;
+		case 2:
+	        redValue = 150;
+	        greenValue = 0;
+	        blueValue = 150;
+			break;
+		default:
+			break;
+	}
+    i++;
+    if (i == 3)
+    {i = 0;}
     NWKU_PrintDec(redValue, aCommand + 5, 3, TRUE);     //aCommand + strlen("rgb r")
     NWKU_PrintDec(greenValue, aCommand + 10, 3, TRUE);  //aCommand + strlen("rgb r000 g")
     NWKU_PrintDec(blueValue, aCommand + 15, 3, TRUE);   //aCommand + strlen("rgb r000 g000 b")
-
     APP_SendLedCommand(aCommand, sizeof(aCommand), slaveNum);
 }
 
 
 
-/*!*************************************************************************************************
-\private
-\fn     static void APP_SendLedRgbOff(void *pParam)
-\brief  This function is used to send a Led RGB Off command over the air.
-
-\param  [in]    pParam    Not used
-***************************************************************************************************/
-static void APP_SendLedRgbOff
-(
-    void *pParam
-)
-{
-    uint8_t aCommand[] = {"rgb r000 g000 b000"};
-
-    APP_SendLedCommand(aCommand, sizeof(aCommand), 0);
-}
 
 /*!*************************************************************************************************
 \private
@@ -676,12 +716,12 @@ static void APP_SendLedRgbOff
 ***************************************************************************************************/
 static void APP_SendLedFlash
 (
-    void *pParam
+	uint8_t slaveNum
 )
 {
     uint8_t aCommand[] = {"flash"};
 
-    APP_SendLedCommand(aCommand, sizeof(aCommand), 0);
+    APP_SendLedCommand(aCommand, sizeof(aCommand), slaveNum);
 }
 
 /*!*************************************************************************************************
@@ -693,12 +733,12 @@ static void APP_SendLedFlash
 ***************************************************************************************************/
 static void APP_SendLedColorWheel
 (
-    void *pParam
+	uint8_t slaveNum
 )
 {
     uint8_t aCommand[] = {"color wheel"};
 
-    APP_SendLedCommand(aCommand, sizeof(aCommand), 0);
+    APP_SendLedCommand(aCommand, sizeof(aCommand), slaveNum);
 }
 
 /*!*************************************************************************************************
@@ -753,10 +793,13 @@ static void APP_CoapTextCb
         myText[dataLen] = '\0';
         FLib_MemCpy(myText,pData,dataLen);
         ntop(AF_INET6, &pSession->remoteAddr, addrStr, INET6_ADDRSTRLEN);
+
+#ifdef SHELL_DEBUG
         shell_write("\r");
         shell_printf(myText);
         shell_printf("\tFrom IPv6 Address: %s\n\r", addrStr);
         shell_refresh();
+#endif
     }
 
     /* Send the reply if the status is Success or Duplicate */
@@ -778,19 +821,21 @@ static void APP_CoapAddrCb
     uint32_t dataLen
 )
 {
-
-
     /* Process the command if the sessionStatus is "success" */
     if(sessionStatus == gCoapSuccess_c)
     {
         char addrStr[INET6_ADDRSTRLEN];
         ntop(AF_INET6, &pSession->remoteAddr, addrStr, INET6_ADDRSTRLEN);
         slaveIP[slave_count++] = pSession->remoteAddr;
+        shell_printf("%d", slave_count);
+        // In serial just read 3 characters
+#ifdef SHELL_DEBUG
         shell_write("\r");
         shell_printf("1 new device connected! ");
         shell_printf("\tFrom IPv6 Address: %s\n\r", addrStr);
+        shell_printf("Slave count = %d\n\r", slave_count);
         shell_refresh();
-
+#endif
     }
 
     /* Send the reply if the status is Success or Duplicate */
